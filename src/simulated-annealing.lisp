@@ -33,7 +33,7 @@
 (defgeneric evaluate (problem-obj))
 (defgeneric solve (problem-obj &key inform-per-time))
 
-(defmethod solve ((annealer-obj annealer) &key (inform-per-time 500))
+(defmethod solve ((annealer-obj annealer) &key (inform-per-time 500) (silent nil))
   "Solve a problem by simulated annealing."
   (declare (positive-fixnum inform-per-time)
            (optimize (speed 3) (safety 1)))
@@ -41,7 +41,7 @@
     (declare (single-float tmax tmin)
              (positive-fixnum max-steps)
              (function state-copier)
-             (real goal-value))
+             ((or null real) goal-value))
     (let* ((value (evaluate annealer-obj))
            (best-state (funcall state-copier state))
            (best-value value)
@@ -57,28 +57,36 @@
                           (single-float temp))
                  (exp (/ (- e1 e2) temp))))
         (declare (inline temperature probability))
-        (iter (for i below max-steps)
-              (for i-mod from 0)
-              (when (= i-mod inform-per-time)
-                (format t "Progress: ~,2F%, Value: ~,2F, Best value: ~,2F~%"
-                        (* i /max-steps100)
-                        value
-                        best-value)
-                (setf i-mod 0))
-              (let ((prev-state (funcall state-copier state))
-                    (prev-value value))
-                (move annealer-obj)
-                (let ((next-state state)
-                      (next-value (evaluate annealer-obj)))
-                  (when (< next-value best-value)
-                    (progn (setf best-state (funcall state-copier next-state)
-                                 best-value next-value)
-                           (when (<= best-value goal-value)
-                             (finish))))
-                  (if (or (<= next-value prev-value)
-                          (<= (random 1d0)
-                              (probability prev-value next-value (temperature i))))
-                      (setf value next-value
-                            state prev-state)))
-                (finally (return (values best-state
-                                         best-value)))))))))
+        (macrolet
+            ((body (goal-exists)
+               `(iter (for i below max-steps)
+                      (for i-mod from 0)
+                      (when (and (= i-mod inform-per-time)
+                                 (not silent))
+                        (format t "Progress: ~,2F%, Value: ~,2F, Best value: ~,2F~%"
+                                (* i /max-steps100)
+                                value
+                                best-value)
+                        (setf i-mod 0))
+                      (let ((prev-state (funcall state-copier state))
+                            (prev-value value))
+                        (move annealer-obj)
+                        (let ((next-state state)
+                              (next-value (evaluate annealer-obj)))
+                          (when (< next-value best-value)
+                            (progn (setf best-state (funcall state-copier next-state)
+                                         best-value next-value)
+                                   ,(if goal-exists
+                                        `(when (<= best-value goal-value)
+                                           (finish))
+                                        nil)))
+                          (if (or (<= next-value prev-value)
+                                  (<= (random 1d0)
+                                      (probability prev-value next-value (temperature i))))
+                              (setf value next-value
+                                    state prev-state)))
+                        (finally (return (values best-state
+                                                 best-value)))))))
+          (if goal-value
+              (body t)
+              (body nil)))))))
